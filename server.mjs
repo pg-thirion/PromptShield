@@ -3,6 +3,7 @@ import {readFile} from "node:fs/promises";
 import {createHash,randomUUID,timingSafeEqual} from "node:crypto";
 import {pathToFileURL} from "node:url";
 import {inspect} from "./src/engine.mjs";
+import {inspectContext} from "./src/context.mjs";
 
 const ASSETS=new Map([["/","index.html"],["/index.html","index.html"],["/src/style.css","src/style.css"],["/src/app.mjs","src/app.mjs"],["/src/engine.mjs","src/engine.mjs"],["/src/cases.mjs","src/cases.mjs"]]);
 const MIME={html:"text/html; charset=utf-8",css:"text/css; charset=utf-8",mjs:"text/javascript; charset=utf-8"};
@@ -20,6 +21,10 @@ export function loadConfig(env=process.env){
   const ids=new Set(),digests=new Set();
   for(const c of clients){
     if(!c||typeof c!=="object"||!/^[-a-zA-Z0-9_]{1,64}$/.test(c.id??"")||!(/^[a-f0-9]{64}$/.test(c.sha256??""))||ids.has(c.id)||digests.has(c.sha256)||!Array.isArray(c.scopes)||!c.scopes.length||c.scopes.some(s=>!["input","output"].includes(s)))throw new Error("Invalid client configuration");
+    if(Object.keys(c).some(k=>!["id","sha256","scopes","ratePerMinute","expiresAt","disabled"].includes(k)))throw new Error("Unknown client configuration");
+    if(c.ratePerMinute!==undefined)bounded(c.ratePerMinute,1,600,"client rate");
+    if(c.disabled!==undefined&&typeof c.disabled!=="boolean")throw new Error("Invalid disabled flag");
+    if(c.expiresAt!==undefined&&(typeof c.expiresAt!=="string"||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(c.expiresAt)||!Number.isFinite(Date.parse(c.expiresAt))))throw new Error("Invalid credential expiry");
     ids.add(c.id);digests.add(c.sha256);
   }
   const markers=JSON.parse(env.PS_PROTECTED_MARKERS_JSON??"[]");
@@ -36,7 +41,8 @@ export function createServer(config,{audit=()=>{},now=Date.now}={}){
   const server=http.createServer(async(req,res)=>{
     const requestId=randomUUID(),started=now();
     let clientId=null,decision=null,ruleIds=[];
-    const endpoint=req.url==="/v1/inspect/input"?"input":req.url==="/v1/inspect/output"?"output":null;
+    const route=/^\/v1\/(inspect|context)\/(input|output)$/.exec(req.url??"");
+    const endpoint=route?.[2]??null, batch=route?.[1]==="context";
     const finish=(status,body,extra={})=>{
       if(res.destroyed||res.writableEnded)return;
       res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","X-Request-Id":requestId,...HEADERS,...extra});
@@ -46,6 +52,7 @@ export function createServer(config,{audit=()=>{},now=Date.now}={}){
     const reject=(status,error,extra={})=>finish(status,{error,requestId},extra);
     if(!config.hosts.includes((req.headers.host??"").toLowerCase()))return reject(403,"Host not allowed");
     if(req.url==="/healthz"&&req.method==="GET")return finish(200,{status:"ok",apiEnabled:config.clients.length>0});
+    if(req.url==="/readyz"&&req.method==="GET"){const ready=config.clients.some(c=>!c.disabled&&(!c.expiresAt||Date.parse(c.expiresAt)>now()));return finish(ready?200:503,{status:ready?"ready":"not_ready"});}
     if(endpoint){
       if(req.method!=="POST")return reject(405,"Method not allowed",{Allow:"POST"});
       if(req.headers.origin||req.headers["sec-fetch-site"])return reject(403,"Browser API requests not supported");
@@ -54,12 +61,12 @@ export function createServer(config,{audit=()=>{},now=Date.now}={}){
       if(!auth)return reject(401,"Authentication required",{"WWW-Authenticate":"Bearer"});
       const digest=hash(auth[1]);
       const client=config.clients.find(c=>timingSafeEqual(digest,Buffer.from(c.sha256,"hex")));
-      if(!client)return reject(401,"Authentication required",{"WWW-Authenticate":"Bearer"});
+      if(!client||client.disabled||(client.expiresAt&&Date.parse(client.expiresAt)<=now()))return reject(401,"Authentication required",{"WWW-Authenticate":"Bearer"});
       clientId=client.id;
       if(!client.scopes.includes(endpoint))return reject(403,"Scope denied");
       const t=now(),old=buckets.get(client.id);
       const b=!old||t-old.start>=60000?{start:t,count:0}:old;
-      if(b.count>=config.rate)return reject(429,"Rate limit exceeded",{"Retry-After":String(Math.max(1,Math.ceil((60000-(t-b.start))/1000)))});
+      if(b.count>=Math.min(config.rate,client.ratePerMinute??config.rate))return reject(429,"Rate limit exceeded",{"Retry-After":String(Math.max(1,Math.ceil((60000-(t-b.start))/1000)))});
       b.count++;buckets.set(client.id,b);
       if(active>=config.maxConcurrent)return reject(503,"Inspection capacity reached",{"Retry-After":"1"});
       if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers["content-type"]??"")||req.headers["content-encoding"])return reject(415,"Uncompressed UTF-8 JSON required");
@@ -74,6 +81,13 @@ export function createServer(config,{audit=()=>{},now=Date.now}={}){
         }
         let payload;
         try{payload=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(Buffer.concat(chunks)));}catch{return reject(400,"Invalid JSON");}
+        if(batch){
+          if(!payload||typeof payload!=="object"||Array.isArray(payload)||Object.keys(payload).some(k=>k!=="segments"))return reject(400,"Invalid context payload");
+          let result;
+          try{result=inspectContext(payload.segments,{direction:endpoint,protectedMarkers:config.markers,policy:config.policy});}catch(e){return reject(e instanceof TypeError?400:500,"Context inspection failed; do not forward");}
+          decision=result.decision;ruleIds=[...new Set([...result.segments,...result.contextFindings].flatMap(x=>x.findings.map(f=>f.id)))];
+          return finish(200,{requestId,...result});
+        }
         if(!payload||typeof payload!=="object"||Array.isArray(payload)||Object.keys(payload).some(k=>!["text","source"].includes(k))||typeof payload.text!=="string"||!payload.text.trim()||!["user","retrieved","tool"].includes(payload.source??"user"))return reject(400,"Invalid inspection payload");
         let result;
         try{result=inspect(payload.text,{direction:endpoint,source:payload.source??"user",protectedMarkers:config.markers,policy:config.policy});}catch(e){return reject(e instanceof TypeError?400:500,"Inspection failed; do not forward");}
