@@ -45,7 +45,7 @@ export function inspect(input, options={}) {
   sensitive("DLP-01","email","medium","Email address detected.",/\b[A-Z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){1,10}\b/gi);
   sensitive("DLP-02","private_key","high","Private key material detected.",/-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----|$)/g);
   sensitive("DLP-03","api_token","high","Recognisable credential token detected.",/\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{15,})\b/g);
-  sensitive("DLP-04","credential_assignment","high","Potential secret assignment detected.",/\b(?:password|passwd|api[_ -]?key|secret|access[_ -]?token|client[_ -]?secret)\s*[:=]\s*(?:"[^"\r\n]{4,}"|'[^'\r\n]{4,}'|[^\s,;]{6,})/gi);
+  sensitive("DLP-04","credential_assignment","high","Potential secret assignment detected.",/\b(?:password|passwd|api[_ -]?key|secret|access[_ -]?token|client[_ -]?secret)["']?[ \t]{0,32}[:=][ \t]{0,32}(?:"(?:\\.|[^"\\\r\n]){1,2048}(?:"|$)|'(?:\\.|[^'\\\r\n]){1,2048}(?:'|$)|[^\s,;}\]]{1,})/gi);
   sensitive("DLP-05","payment_card","high","Luhn-valid payment card candidate detected.",/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g,s=>{const d=s.replace(/\D/g,"");return d.length>=13&&d.length<=19&&luhn(d)&&!(/^(\d)\1+$/.test(d))&&!(d.length===13&&saId(d));});
   sensitive("DLP-06","south_african_id","high","Checksum-valid South African ID candidate detected.",/(?<!\d)\d{13}(?!\d)/g,saId);
   sensitive("DLP-07","jwt","high","JWT-like token detected.",/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{8,}\b/g);
@@ -54,9 +54,9 @@ export function inspect(input, options={}) {
   sensitive("DLP-11","south_african_phone","medium","South African telephone number candidate detected.",/(?<!\d)(?:\+27|0)[ -]?[1-8]\d(?:[ -]?\d){7}(?!\d)/g);
   if(direction==="output"||markers.length){
     let count=0;
-    for(const marker of markers){
+    for(const marker of new Set(markers)){
       const m=canonical(marker);if(m.length<8||m.length>256)throw new TypeError("Invalid normalised marker.");
-      let at=0;while((at=content.indexOf(m,at))!==-1){spans.push({start:at,end:at+m.length,cat:"protected_marker"});count++;at+=1;}
+      const at=content.indexOf(m);if(at!==-1){spans.push({start:at,end:at+m.length,cat:"protected_marker"});count++;}
     }
     add("DLP-09","protected_marker","high","Configured protected content detected.",count);
   }
@@ -70,7 +70,9 @@ export function inspect(input, options={}) {
   const leak=findings.some(f=>f.id.startsWith("DLP-")&&f.severity==="high");
   const review=findings.some(f=>f.id.startsWith("INJ-"));
   const protectedLeak=findings.some(f=>f.id==="DLP-09");
-  const decision=attack||protectedLeak||(direction==="output"&&leak)||(policy==="strict"&&merged.length)?"block":review?"review":merged.length?"redact":"allow";
+  // Do not forward a partially redacted quoted credential: fail closed.
+  const ambiguousCredential=findings.some(f=>f.id==="DLP-04")&&/(?:password|passwd|api[_ -]?key|secret|access[_ -]?token|client[_ -]?secret)["\']?[ \t]{0,32}[:=][ \t]{0,32}["\'][^\r\n]{2048}/i.test(content);
+  const decision=attack||protectedLeak||ambiguousCredential||(direction==="output"&&leak)||(policy==="strict"&&merged.length)?"block":review?"review":merged.length?"redact":"allow";
   const score=Math.min(100,findings.reduce((n,f)=>n+(f.severity==="high"?45:f.severity==="medium"?20:0),0));
   return {version:"1.1.0",policy,direction,source,decision,riskScore:score,findings,redactionCount:merged.length,sanitisedText:decision==="block"||decision==="review"?null:sanitised};
 }
