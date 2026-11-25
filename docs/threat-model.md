@@ -1,22 +1,20 @@
 # Threat model
 
-## Assets and trust boundaries
-User text, retrieved documents, tool output and generated responses are untrusted. System policy, protected marker configuration, identity and permissions belong to the trusted integrating application. The inspection engine is deterministic; no untrusted content is executed. Browser input stays in memory; local API responses are not logged by the application.
+User prompts, retrieved documents, tool output and generated responses are untrusted. Service identity, provenance, server policy and protected marker configuration must remain in the trusted integration boundary. The browser workbench is an educational client, not an enforcement boundary.
 
-## Threats and controls
 | Threat | Implemented control | Residual risk |
 | --- | --- | --- |
-| Direct or indirect instruction manipulation | Explicit pattern rules, source classification, hold/block | Paraphrasing, multilingual text and encoded attacks can bypass patterns |
-| Credential and personal information leakage | Recognised patterns, checksum validation, output markers, span redaction | Unstructured information, novel token formats, false positives |
-| Privileged instruction disclosure | Extraction rules and exact output canary detection | Paraphrased or transformed content is not reliably detected |
-| Untrusted content rendering | DOM textContent, restrictive CSP, no HTML interpolation | Browser extensions and compromised host remain out of scope |
-| Resource abuse | Length limits and bounded local requests | No production concurrency controls or authentication |
-| Policy bypass by integration | Distinct decisions and no forwardable text for block/review | Client-side checks are bypassable; server enforcement is required |
+| Direct or indirect injection | Deterministic rules, review and block decisions | Semantic paraphrases, encodings and multilingual text may evade detection |
+| Sensitive data exposure | Pattern recognition, checksums, exact protected canaries, strict policy | Unstructured personal data, novel credentials, split or paraphrased secrets |
+| Unauthorised API use | High-entropy bearer digests, endpoint scopes, server-owned policy | Compromised credentials, rotation and revocation depend on deployment |
+| Configuration tampering | Reject client-supplied policy and protected markers | Trusted operators and integration code remain security-critical |
+| Untrusted content rendering | DOM textContent, restrictive CSP, no external script | Browser extensions and compromised device are out of scope |
+| Resource abuse | Size, connection, request, concurrency and per-key limits | Distributed abuse, upstream proxy limits, independent load tests outstanding |
+| Sensitive logging | Allowlisted metadata events only | Reverse proxy, provider, infrastructure and observability configuration need review |
+| Integration bypass | Guarded text-only provider helper, fail-closed decisions | Direct provider access or misconfigured clients bypass the control |
 
-## Policy
-High-severity injection findings block input. Suspicious instruction findings require review. Recognised sensitive input is redacted. High-severity sensitive output blocks, and lower-severity output is redacted. Allow means no configured actionable rule matched, not that the text is safe.
+## Trust and release boundaries
 
-## Deployment assumptions
-Local educational use. Do not submit production secrets or real customer data. Do not use as the sole defence. A production design needs authenticated service identities, per-tool authorisation, least privilege, strict structured output validation, independent DLP, human approval and auditable metadata without storing sensitive payloads.
+The inspection service is not a model firewall capable of understanding all natural language. Never allow model output to directly authorise a privileged action. Use least-privilege tools, explicit user authorisation, typed structured output validation, separate DLP controls and human review. Configure protected canaries in trusted infrastructure only. Never publish them or use real customer records as demo fixtures.
 
-Relevant reading: OWASP Top 10 for LLM Applications (prompt injection and sensitive information disclosure), https://genai.owasp.org/llm-top-10/ . This project does not claim certification or complete coverage.
+API clients are machine identities, not end-user identities. Use separate credentials and applications for distinct trust boundaries; shared-process policies and limits do not provide full multi-tenant isolation. Store configuration and secrets using a secret manager. Test incident handling, rotation, load, availability and restoration before deployment.
