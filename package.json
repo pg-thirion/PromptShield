@@ -1,15 +1,16 @@
 {
   "name": "promptshield",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Local-first deterministic AI security inspection lab",
+  "description": "Deterministic AI security inspection service and local-first workbench",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "benchmark": "node scripts/benchmark.mjs"
+    "benchmark": "node scripts/benchmark.mjs",
+    "create-client": "node scripts/create-client.mjs"
   }
 }
