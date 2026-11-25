@@ -19,6 +19,7 @@ export function createGuardedModel({provider,protectedMarkers=[],policy="strict"
       ]);
     }catch{return {status:timedOut?"provider_timeout":"provider_failed",input:summary(input),output:null,text:null};}
     finally{clearTimeout(timer);}
+    if(timedOut)return {status:"provider_timeout",input:summary(input),output:null,text:null};
     let output;
     try{output=inspect(response,{direction:"output",policy,protectedMarkers:markers});if(!response.trim())throw new TypeError();}catch{return {status:"output_invalid",input:summary(input),output:null,text:null};}
     return {status:output.sanitisedText===null?"output_withheld":"completed",input:summary(input),output:summary(output),text:output.sanitisedText};
