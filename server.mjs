@@ -5,7 +5,7 @@ import {pathToFileURL} from "node:url";
 import {inspect} from "./src/engine.mjs";
 import {inspectContext} from "./src/context.mjs";
 
-const ASSETS=new Map([["/","index.html"],["/index.html","index.html"],["/src/style.css","src/style.css"],["/src/app.mjs","src/app.mjs"],["/src/engine.mjs","src/engine.mjs"],["/src/cases.mjs","src/cases.mjs"]]);
+const ASSETS=new Map([["/","index.html"],["/index.html","index.html"],["/src/style.css","src/style.css"],["/src/app.mjs","src/app.mjs"],["/src/engine.mjs","src/engine.mjs"],["/src/cases.mjs","src/cases.mjs"],["/src/context.mjs","src/context.mjs"],["/src/analytics.mjs","src/analytics.mjs"]]);
 const MIME={html:"text/html; charset=utf-8",css:"text/css; charset=utf-8",mjs:"text/javascript; charset=utf-8"};
 const HEADERS={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Frame-Options":"DENY","Permissions-Policy":"camera=(), microphone=(), geolocation=()","Content-Security-Policy":"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"};
 const hash=s=>createHash("sha256").update(s).digest();
